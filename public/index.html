@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KES Exchange Rates</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      font-family: 'IBM Plex Sans', system-ui, sans-serif;
+      font-variant-numeric: tabular-nums;
+    }
+
+    @keyframes flash-up {
+      from {
+        background-color: rgb(11 107 69 / .18);
+      }
+
+      to {
+        background-color: transparent;
+      }
+    }
+
+    @keyframes flash-down {
+      from {
+        background-color: rgb(179 38 30 / .18);
+      }
+
+      to {
+        background-color: transparent;
+      }
+    }
+
+    .flash-up {
+      animation: flash-up 1.6s ease-out;
+    }
+
+    .flash-down {
+      animation: flash-down 1.6s ease-out;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+
+      .flash-up,
+      .flash-down {
+        animation: none;
+      }
+    }
+  </style>
+</head>
+
+<body class="min-h-screen bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+
+  <body class="min-h-screen bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <main class="grid min-h-screen grid-rows-[auto_auto_1fr] gap-5 p-5 lg:p-6">
+
+      <header class="flex items-center justify-between gap-4">
+        <h1 class="text-xl font-semibold">Kenyan shilling rates</h1>
+
+        <div
+          class="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-sm text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-800">
+          <span id="dot" class="h-2 w-2 rounded-full bg-amber-500"></span>
+          <span id="status-text">Connecting</span>
+        </div>
+      </header>
+
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <span class="text-sm text-slate-500 dark:text-slate-400">
+          Charts show
+        </span>
+
+        <div id="ranges" class="inline-flex rounded-lg bg-slate-200/70 p-1 text-sm dark:bg-slate-800" role="group"
+          aria-label="History range">
+          <button data-range="24h" class="rounded-md px-3 py-1 font-medium">
+            24h
+          </button>
+
+          <button data-range="7d" class="rounded-md px-3 py-1 font-medium">
+            7 days
+          </button>
+
+          <button data-range="30d" class="rounded-md px-3 py-1 font-medium">
+            30 days
+          </button>
+
+          <button data-range="all" class="rounded-md px-3 py-1 font-medium">
+            All
+          </button>
+        </div>
+      </div>
+
+      <div class="grid min-h-0 grid-rows-[auto_1fr] gap-5">
+
+        <div class="grid gap-5 lg:grid-cols-2">
+
+          <div id="primary"></div>
+
+          <div id="secondary" class="grid gap-5 sm:grid-cols-2"></div>
+
+        </div>
+
+        <section class="flex min-h-0 flex-col">
+
+          <div class="mb-3 flex items-end justify-between gap-4">
+            <div>
+              <h2 id="table-title" class="text-lg font-semibold">
+                Rate history
+              </h2>
+
+              <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                KES per 1 unit of each currency. A new row is added each time a
+                rate changes.
+              </p>
+            </div>
+
+            <p id="updated" class="shrink-0 text-sm text-slate-500 dark:text-slate-400">
+              Waiting for the first update…
+            </p>
+          </div>
+
+          <div
+            class="min-h-0 flex-1 overflow-auto rounded-2xl bg-white ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800">
+            <table class="w-full text-left text-sm">
+              <thead id="table-head" class="sticky top-0 bg-white text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+              </thead>
+
+              <tbody id="table-body" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+            </table>
+          </div>
+
+        </section>
+
+      </div>
+
+    </main>
+
+    <script>
+      // Same origin when served by Express; falls back to localhost if opened as a file.
+      const API_BASE = location.protocol === 'file:' ? 'http://localhost:3000' : ''
+
+      const CURRENCIES = [
+        { key: 'USD_KES', code: 'USD', label: '1 US dollar buys', primary: true },
+        { key: 'EUR_KES', code: 'EUR', label: '1 euro buys' },
+        { key: 'GBP_KES', code: 'GBP', label: '1 British pound buys' },
+      ]
+      const DAY = 864e5
+      const RANGES = {
+        '24h': { ms: DAY, label: 'the last 24 hours' },
+        '7d': { ms: 7 * DAY, label: 'the last 7 days' },
+        '30d': { ms: 30 * DAY, label: 'the last 30 days' },
+        all: { ms: Infinity, label: 'all recorded history' },
+      }
+      const TONES = {
+        up: ['text-emerald-700', 'dark:text-emerald-400'],
+        down: ['text-red-700', 'dark:text-red-400'],
+        flat: ['text-slate-500', 'dark:text-slate-400'],
+      }
+
+      const fmt = new Intl.NumberFormat('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      const fmtTime = (t) => new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      const $ = (id) => document.getElementById(id)
+
+      let history = []        // [{ timestamp, rates }], oldest first
+      let range = '30d'
+      let latestTs = null     // timestamp of the newest entry we've rendered
+
+      // ---------- layout ----------
+
+      function cardHTML(c) {
+          const big = c.primary
+
+          return `
+    <section
+      id="card-${c.key}"
+      class="flex h-full flex-col rounded-2xl bg-white p-6 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800 ${big ? 'sm:p-8 lg:p-10' : 'sm:p-6'
+            }"
+    >
+      <p class="text-sm text-slate-500 dark:text-slate-400">
+        ${c.label}
+      </p>
+
+      <div class="mt-2 flex items-baseline gap-3">
+        <span
+          id="value-${c.key}"
+          class="font-semibold tracking-tight ${big
+              ? 'text-6xl sm:text-7xl lg:text-8xl'
+              : 'text-4xl sm:text-5xl lg:text-6xl'
+            }"
+        >
+          —
+        </span>
+
+        <span
+          class="font-medium text-slate-500 dark:text-slate-400 ${big ? 'text-2xl' : 'text-xl'
+            }"
+        >
+          KES
+        </span>
+      </div>
+
+      <p
+        id="delta-${c.key}"
+        class="mt-3 h-6 text-sm font-medium"
+      ></p>
+
+      <div class="mt-auto pt-6">
+
+        <div
+          id="readout-${c.key}"
+          class="mb-2 flex justify-between gap-2 text-xs text-slate-500 dark:text-slate-400"
+        >
+          <span></span>
+          <span></span>
+        </div>
+
+        <svg
+          id="chart-${c.key}"
+          class="w-full touch-pan-y ${big ? 'h-40 lg:h-48' : 'h-28 lg:h-32'
+            }"
+          viewBox="0 0 300 100"
+          preserveAspectRatio="none"
+          role="img"
+          aria-label="${c.code} to KES history"
+        ></svg>
+
+        <p
+          id="summary-${c.key}"
+          class="mt-2 text-sm text-slate-500 dark:text-slate-400"
+        ></p>
+
+      </div>
+    </section>
+  `
+        }
+
+
+      $('primary').innerHTML = cardHTML(CURRENCIES[0])
+      $('secondary').innerHTML = CURRENCIES.slice(1).map(cardHTML).join('')
+
+      function setTone(el, tone) {
+        for (const list of Object.values(TONES)) el.classList.remove(...list)
+        el.classList.add(...TONES[tone])
+      }
+
+      // ---------- data ----------
+      function merge(entries) {
+        const byTime = new Map(history.map((e) => [e.timestamp, e]))
+        for (const e of entries) byTime.set(e.timestamp, { timestamp: e.timestamp, rates: e.rates })
+        history = [...byTime.values()].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+      }
+
+      async function loadHistory() {
+        try {
+          const res = await fetch(`${API_BASE}/api/rates/history?limit=5000`)
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          merge(await res.json())
+          renderAll()
+        } catch (err) {
+          console.error('Could not load history', err)
+        }
+      }
+
+      // Rates hold their value until the next update, so history is a step function.
+      function seriesFor(key) {
+        const now = Date.now()
+        const { ms } = RANGES[range]
+        const cutoff = ms === Infinity ? null : now - ms
+
+        const pts = history
+          .filter((e) => cutoff === null || Date.parse(e.timestamp) >= cutoff)
+          .map((e) => ({ t: Date.parse(e.timestamp), v: e.rates[key] }))
+
+        if (cutoff !== null) {
+          const before = history.findLast((e) => Date.parse(e.timestamp) < cutoff)
+          if (before) pts.unshift({ t: cutoff, v: before.rates[key] })
+        }
+        if (pts.length) pts.push({ t: now, v: pts.at(-1).v })
+
+        return pts.filter((p) => Number.isFinite(p.v))
+      }
+
+      // ---------- rendering ----------
+      function drawChart(c) {
+        const svg = $(`chart-${c.key}`)
+        const [left, right] = $(`readout-${c.key}`).children
+        const summary = $(`summary-${c.key}`)
+        const pts = seriesFor(c.key)
+
+        if (pts.length < 2) {
+          svg.innerHTML = ''
+          left.textContent = right.textContent = ''
+          summary.textContent = 'Not enough history yet.'
+          setTone(svg, 'flat')
+          return
+        }
+
+        const W = 300, H = 100, PAD = 8
+        const t0 = pts[0].t, t1 = pts.at(-1).t
+        const values = pts.map((p) => p.v)
+        const lo = Math.min(...values), hi = Math.max(...values)
+        const span = hi === lo ? 1 : hi - lo
+        const base = hi === lo ? lo - 0.5 : lo
+
+        const x = (t) => (t1 === t0 ? 0 : ((t - t0) / (t1 - t0)) * W)
+        const y = (v) => PAD + (1 - (v - base) / span) * (H - 2 * PAD)
+
+        let line = `M${x(pts[0].t).toFixed(1)} ${y(pts[0].v).toFixed(1)}`
+        for (const p of pts.slice(1)) line += ` H${x(p.t).toFixed(1)} V${y(p.v).toFixed(1)}`
+
+        svg.innerHTML = `
+        <path d="${line} V${H} H0 Z" fill="currentColor" opacity="0.1"/>
+        <path d="${line}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+        <line y1="0" y2="${H}" stroke="currentColor" stroke-width="1" vector-effect="non-scaling-stroke" opacity="0"/>`
+
+        const net = pts.at(-1).v - pts[0].v
+        setTone(svg, net > 0 ? 'up' : net < 0 ? 'down' : 'flat')
+
+        const label = RANGES[range].label
+        summary.textContent = net === 0
+          ? `No change over ${label}`
+          : `${net > 0 ? '+' : '−'}${fmt.format(Math.abs(net))} (${net > 0 ? '+' : '−'}${Math.abs((net / pts[0].v) * 100).toFixed(2)}%) over ${label}`
+
+        const cursor = svg.querySelector('line')
+        const resetReadout = () => {
+          cursor.setAttribute('opacity', '0')
+          left.textContent = `Low ${fmt.format(lo)}`
+          right.textContent = `High ${fmt.format(hi)}`
+        }
+        resetReadout()
+
+        svg.onpointermove = (ev) => {
+          const rect = svg.getBoundingClientRect()
+          const frac = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width))
+          const t = t0 + frac * (t1 - t0)
+          const point = pts.findLast((p) => p.t <= t) ?? pts[0]
+
+          cursor.setAttribute('x1', frac * W)
+          cursor.setAttribute('x2', frac * W)
+          cursor.setAttribute('opacity', '0.5')
+          left.textContent = fmtTime(t)
+          right.textContent = fmt.format(point.v)
+        }
+        svg.onpointerleave = resetReadout
+      }
+
+      function drawTable() {
+        const { ms, label } = RANGES[range]
+        const cutoff = ms === Infinity ? 0 : Date.now() - ms
+        $('table-title').textContent = `Rate history for ${label}`
+
+        const th = 'px-4 py-3 font-medium'
+        $('table-head').innerHTML = `<tr><th class="${th}">Time</th>${CURRENCIES.map((c) => `<th class="${th} text-right">${c.code}</th>`).join('')}</tr>`
+
+        const rows = []
+        for (let i = history.length - 1; i >= 0 && rows.length < 100; i--) {
+          if (Date.parse(history[i].timestamp) < cutoff) break
+          const prev = history[i - 1]
+          const cells = CURRENCIES.map((c) => {
+            const v = history[i].rates[c.key]
+            const old = prev?.rates[c.key]
+            const arrow = typeof old !== 'number' || old === v ? ''
+              : v > old ? '<span class="mr-1 text-emerald-700 dark:text-emerald-400">▲</span>'
+                : '<span class="mr-1 text-red-700 dark:text-red-400">▼</span>'
+            return `<td class="px-4 py-2 text-right">${arrow}${fmt.format(v)}</td>`
+          }).join('')
+          rows.push(`<tr><td class="px-4 py-2 text-slate-500 dark:text-slate-400">${fmtTime(history[i].timestamp)}</td>${cells}</tr>`)
+        }
+
+        $('table-body').innerHTML = rows.length
+          ? rows.join('')
+          : `<tr><td colspan="${CURRENCIES.length + 1}" class="px-4 py-6 text-slate-500 dark:text-slate-400">No rate changes recorded in this period.</td></tr>`
+      }
+
+      function renderAll() {
+        const latest = history.at(-1)
+        if (!latest) return
+
+        const prev = history.at(-2)
+        const changed = latestTs !== null && latestTs !== latest.timestamp
+        latestTs = latest.timestamp
+
+        for (const c of CURRENCIES) {
+          const value = latest.rates[c.key]
+          if (typeof value !== 'number') continue
+
+          $(`value-${c.key}`).textContent = fmt.format(value)
+
+          const deltaEl = $(`delta-${c.key}`)
+          const old = prev?.rates[c.key]
+          if (typeof old === 'number' && old !== value) {
+            const up = value > old
+            deltaEl.textContent = `${up ? '▲ +' : '▼ −'}${fmt.format(Math.abs(value - old))} since previous update`
+            setTone(deltaEl, up ? 'up' : 'down')
+          } else {
+            deltaEl.textContent = prev ? 'No change since previous update' : ''
+            setTone(deltaEl, 'flat')
+          }
+
+          if (changed) {
+            const card = $(`card-${c.key}`)
+            card.classList.remove('flash-up', 'flash-down')
+            if (typeof old === 'number' && old !== value) {
+              void card.offsetWidth // restart animation
+              card.classList.add(value > old ? 'flash-up' : 'flash-down')
+            }
+          }
+
+          drawChart(c)
+        }
+
+        drawTable()
+        tick()
+      }
+
+      function tick() {
+        if (!latestTs) return
+        const secs = Math.max(0, Math.round((Date.now() - Date.parse(latestTs)) / 1000))
+        const ago = secs < 60 ? `${secs}s ago` : secs < 3600 ? `${Math.floor(secs / 60)}m ago` : secs < DAY / 1000 ? `${Math.floor(secs / 3600)}h ago` : `${Math.floor(secs / 86400)}d ago`
+        $('updated').textContent = `Rates last changed ${fmtTime(latestTs)} (${ago})`
+      }
+      setInterval(tick, 1000)
+
+      // ---------- range control ----------
+      function syncRangeButtons() {
+        for (const btn of document.querySelectorAll('#ranges button')) {
+          const active = btn.dataset.range === range
+          btn.setAttribute('aria-pressed', active)
+          btn.classList.toggle('bg-white', active)
+          btn.classList.toggle('shadow-sm', active)
+          btn.classList.toggle('dark:bg-slate-700', active)
+          btn.classList.toggle('text-slate-500', !active)
+          btn.classList.toggle('dark:text-slate-400', !active)
+        }
+      }
+
+      $('ranges').addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-range]')
+        if (!btn) return
+        range = btn.dataset.range
+        syncRangeButtons()
+        renderAll()
+      })
+      syncRangeButtons()
+
+      // ---------- live stream ----------
+      function setStatus(state) {
+        const map = {
+          live: ['bg-emerald-600', 'Live'],
+          connecting: ['bg-amber-500', 'Connecting'],
+          offline: ['bg-red-600', 'Disconnected, retrying'],
+        }
+        const [color, text] = map[state]
+        $('dot').className = `h-2 w-2 rounded-full ${color}`
+        $('status-text').textContent = text
+      }
+
+      function connect() {
+        const source = new EventSource(`${API_BASE}/api/rates/stream`)
+
+        source.onopen = () => {
+          setStatus('live')
+          loadHistory() // also fills any gap left by a dropped connection
+        }
+        source.onmessage = (e) => {
+          try {
+            const event = JSON.parse(e.data)
+            if (!event?.rates) return
+            merge([event])
+            renderAll()
+          } catch (err) {
+            console.error('Bad event', err)
+          }
+        }
+        source.onerror = () => {
+          if (source.readyState === EventSource.CLOSED) {
+            setStatus('offline')
+            setTimeout(connect, 5000) // EventSource gives up on fatal errors, so retry ourselves
+          } else {
+            setStatus('connecting') // the browser is retrying on its own
+          }
+        }
+      }
+
+      connect()
+    </script>
+  </body>
+
+</html>
