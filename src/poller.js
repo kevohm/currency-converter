@@ -11,6 +11,7 @@ const MIN_DELAY = 5 * 60 * 1000   // never poll more often than this
 const RETRY_DELAY = 10 * 60 * 1000
 
 let timer = null
+let running = false
 
 function delayUntil(nextUpdateMs) {
     if (!nextUpdateMs) return HOUR
